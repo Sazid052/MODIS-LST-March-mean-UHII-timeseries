@@ -1,0 +1,132 @@
+var BMD_location = ee.Geometry.Point([90.3783, 23.7799]); // Dhaka BMD
+// var BMD_location = ee.Geometry.Point([90.426291,  24.725688]); // Mymensingh BMD
+
+ 
+//Study Area
+// var roi = ee.FeatureCollection('projects/ee-sazidbs02/assets/Dhaka_Core'); // Dhaka Core
+// var roi = ee.FeatureCollection('projects/ee-sazidbs02/assets/Dhaka_Surroundings'); // Dhaka City - Dhaka Core
+var roi = ee.FeatureCollection('projects/ee-sazidbs02/assets/Dhaka_City_Dissolved'); // Dhaka City
+// var roi = ee.FeatureCollection('projects/ee-sazidbs02/assets/Dhaka_City_Buffer_3_5km'); // Dhaka City Buffer
+// var roi = ee.FeatureCollection('projects/ee-sazidbs02/assets/UHII_Blocks/1_Block_W'); // Dhaka Blocks
+
+// 1_Block_N, 1_Block_S, 1_Block_E, 1_Block_W, 1_Block_S_E, 1_Block_Rustompur, 1_Block_Purbachal
+
+//Import the LST image collection
+var modis = ee.ImageCollection("MODIS/061/MOD11A1") // Terra 10:30 am (day), 10:30 pm (night)
+// var modis = ee.ImageCollection("MODIS/061/MYD11A1") // Aqua 01:30 am (night), 01:30 pm (day)
+.filter(ee.Filter.calendarRange(3, 3, 'month')) //ee.Filter.calendarRange(start, end, field) Selects Data of March only
+.filterDate("2000-01-01","2024-05-01")
+// .select('LST_Day_1km') //for day time
+.select('LST_Night_1km') //for night time
+// .select('Day_view_time')
+// .select('Night_view_time')
+
+
+// Visualization parameters
+var imageVisParam = {
+  // bands: ["LST_Day_1km"],
+  bands: ["LST_Night_1km"],
+  min: 20,
+  max: 50,
+  palette: ["12a418", "4bff37", "faff2e", "ffac2c", "ff1d10"],
+  opacity: 1
+};
+
+// kelvin to celcius
+var modcel = modis.map(function(img){
+  return img
+  .multiply(0.02)
+  .subtract(273.15)
+  .copyProperties(img, ['system:time_start'])
+})
+
+Map.setOptions('SATELLITE');
+Map.centerObject(BMD_location, 10);
+
+
+// Clip the image using roi
+var LST_clipped = modcel.mean().clip(roi);
+// // Clip the image using Mymensingh_area
+// var LST_clipped = modcel.mean().clip(Mymensingh_area);
+
+// Print minimum, maximum, and average values
+var statistics = LST_clipped.reduceRegion({
+  reducer: ee.Reducer.minMax().combine({
+    reducer2: ee.Reducer.mean(),
+    sharedInputs: true
+  }),
+  geometry: roi,
+  // geometry: Mymensingh_area,
+  scale: 1000
+});
+
+// print('Minimum LST value:', statistics.get('LST_Day_1km_min'));
+// print('Maximum LST value:', statistics.get('LST_Day_1km_max'));
+// print('Average LST value:', statistics.get('LST_Day_1km_mean'));
+print('Minimum LST value:', statistics.get('LST_Night_1km_min'));
+print('Maximum LST value:', statistics.get('LST_Night_1km_max'));
+print('Average LST value:', statistics.get('LST_Night_1km_mean'));
+
+
+
+Map.addLayer(LST_clipped, imageVisParam, 'LST Clipped');
+// Map.addLayer(BMD_location, {color: 'red'}, 'BMD Location');
+
+// Export the clipped LST image to Google Drive
+Export.image.toDrive({
+  image: LST_clipped,
+  description: 'MODIS_LST_Clipped_Dhaka_2000_to 2024_March_1030pm',
+  // description: 'MODIS_LST_Clipped_Mymensingh_2023_March',
+  scale: 1000, // Set the scale according to your needs
+  region: roi,
+  // region: Mymensingh_area,
+  folder: 'LST_MODIS', // Set the folder in your Google Drive where you want to export the image
+  fileNamePrefix: 'MODIS_LST_Clipped_Dhaka_2000_to 2024_March_1030pm',
+  // fileNamePrefix: 'MODIS_LST_Clipped_Mymensingh_2023_March',
+  maxPixels: 1e13
+});
+
+////////////////////////////////////////////////////////////////////////////
+
+// Function to calculate mean LST for each year
+var yearlyMean = ee.ImageCollection.fromImages(
+  ee.List.sequence(2000, 2024).map(function(year){
+    var start = ee.Date.fromYMD(year, 1, 1); 
+    var end = ee.Date.fromYMD(year, 12, 31); 
+    var mean = modcel
+      .filterDate(start, end)
+      .mean()
+      .set('system:time_start', start.millis())
+      .set('year', year);
+    return mean;
+  })
+);
+
+// Clip the yearly mean LST using roi
+var yearlyMean_clipped = yearlyMean.map(function(img){
+  return img.clip(roi);
+});
+
+// Print the yearly mean LST
+print(yearlyMean_clipped);
+
+// Charting
+var chart = ui.Chart.image.series({
+  imageCollection: yearlyMean_clipped,
+  region: roi,
+  reducer: ee.Reducer.mean(),
+  scale: 1000,
+  xProperty: 'system:time_start',
+});
+
+// Customize the chart
+chart.setOptions({
+  title: 'Mean LST over Years',
+  hAxis: {title: 'Year'},
+  vAxis: {title: 'Mean LST (°C)'},
+  lineWidth: 2,
+  pointSize: 3,
+});
+
+// Display the chart
+print(chart);
